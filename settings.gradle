@@ -1,0 +1,2 @@
+rootProject.name='call_notif'
+include ':app'
