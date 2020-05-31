@@ -19,6 +19,7 @@ import android.os.Build;
 import android.os.IBinder;
 import android.provider.BaseColumns;
 import android.provider.ContactsContract;
+import android.telecom.Call;
 import android.util.Log;
 import android.widget.Toast;
 
@@ -43,9 +44,12 @@ import java.util.Map;
 
 public class PhoneCallService extends Service {
 
-    CallReceiver receiver;
+    CallBroadcast callBroadcast;
+    SmsBroadcast smsBroadcast;
+
     preferences pref;
-    public String HA_URL = "?";
+    public String HA_URL_CALL = "?";
+    public String HA_URL_SMS = "?";
     public String HA_TOKEN="?";
 
     public final String TAG="call_notif";
@@ -64,7 +68,8 @@ public class PhoneCallService extends Service {
     public void onCreate() {
 
         pref=new preferences(this);
-        HA_URL=pref.getUrl()+ "/api/events/call_notif";
+        HA_URL_CALL=pref.getUrl()+ "/api/events/call_event";
+        HA_URL_SMS=pref.getUrl()+ "/api/events/sms_event";
         HA_TOKEN=pref.getToken();
 
         super.onCreate();
@@ -81,13 +86,23 @@ public class PhoneCallService extends Service {
             stopSelf();
         }
         super.onStartCommand(intent, flags, startId);
-        if (receiver==null) {
-            receiver = new CallReceiver();
+        if (callBroadcast==null) {
+            callBroadcast = new CallBroadcast();
             IntentFilter intentFilter = new IntentFilter();
             intentFilter.addAction("android.intent.action.PHONE_STATE");
             intentFilter.addAction("android.intent.action.NEW_OUTGOING_CALL");
             intentFilter.addAction("android.intent.action.NEW_INCOMING_CALL");
-            registerReceiver(receiver, intentFilter);
+            intentFilter.setPriority(IntentFilter.SYSTEM_HIGH_PRIORITY);
+            registerReceiver(callBroadcast, intentFilter);
+        }
+
+        if (smsBroadcast==null) {
+            smsBroadcast = new SmsBroadcast();
+            IntentFilter intentFilter = new IntentFilter();
+            intentFilter.addAction("android.provider.Telephony.SMS_RECEIVED");
+            intentFilter.addAction("android.provider.Telephony.SMS_BROADCAST");
+            intentFilter.setPriority(IntentFilter.SYSTEM_HIGH_PRIORITY);
+            registerReceiver(smsBroadcast, intentFilter);
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
@@ -118,42 +133,60 @@ public class PhoneCallService extends Service {
 
     @Override
     public void onDestroy() {
-        if (receiver!=null) unregisterReceiver(receiver);
+        if (callBroadcast!=null) unregisterReceiver(callBroadcast);
         super.onDestroy();
     }
 
-    public void sendData(String t,String num){
+    private void sendCallEvent(String t,String num){
 
-        ConnectivityManager connManager = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
-        NetworkInfo wifiInfo = connManager.getNetworkInfo(ConnectivityManager.TYPE_WIFI);
-
-        if (!wifiInfo.isConnected() && pref.getWifi()) return;
-
-
-        WifiManager wifiManager = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);;
-        WifiInfo info = wifiManager.getConnectionInfo ();
-        final String ssid  = info.getSSID();
-
-        if (pref.getWifi() && !pref.getWifiName().equals(ssid)) return;
-
-        RequestQueue requestQueue = Volley.newRequestQueue(this);
+        if (pref.getWifi()) {
+            if(new Utils().isWifiConnected(this)){
+                WifiManager wifiManager = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);;
+                WifiInfo info = wifiManager.getConnectionInfo ();
+                final String ssid  = info.getSSID();
+                if (pref.getWifi() && !pref.getWifiName().equals(ssid)) return;
+            }
+        }
 
         Map<String, String> params = new HashMap();
         params.put("type",t);
         params.put("number", num);
         params.put("device",pref.getDevice());
 
+        send(this,HA_URL_CALL,params);
+
+    }
+
+    private void sendSmsEvent(String num,String msg){
+
+        if (pref.getWifi()) {
+            if(new Utils().isWifiConnected(this)){
+                WifiManager wifiManager = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);;
+                WifiInfo info = wifiManager.getConnectionInfo ();
+                final String ssid  = info.getSSID();
+                if (pref.getWifi() && !pref.getWifiName().equals(ssid)) return;
+            }
+        }
+
+        Map<String, String> params = new HashMap();
+        params.put("number",num);
+        params.put("msg", msg);
+        params.put("device",pref.getDevice());
+        send(this,HA_URL_SMS,params);
+    }
+
+    private void send(Context context,String url,Map<String, String> params){
+        RequestQueue requestQueue = Volley.newRequestQueue(context);
+
         JSONObject param=new JSONObject(params);
 
 
-        JsonObjectRequest jsonObjectRequest = new JsonObjectRequest(Request.Method.POST,HA_URL,param, new Response.Listener<JSONObject>() {
+        JsonObjectRequest jsonObjectRequest = new JsonObjectRequest(Request.Method.POST,url,param, new Response.Listener<JSONObject>() {
 
 
             @Override
             public void onResponse(JSONObject response) {
-
                 Log.d(TAG,"Response: "+response);
-
             }
         }, new Response.ErrorListener() {
             @Override
@@ -183,41 +216,14 @@ public class PhoneCallService extends Service {
         jsonObjectRequest.setRetryPolicy(new DefaultRetryPolicy(0, 0, 0));
         requestQueue.add(jsonObjectRequest);
     }
-
-    public String getNameByNumber(String number) {
-        Uri uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(number));
-        String name = "?";
-
-        ContentResolver contentResolver = getContentResolver();
-        Cursor contactLookup = contentResolver.query(uri, new String[] {BaseColumns._ID,
-                ContactsContract.PhoneLookup.DISPLAY_NAME }, null, null, null);
-
-        try {
-            if (contactLookup != null && contactLookup.getCount() > 0) {
-                contactLookup.moveToNext();
-                name = contactLookup.getString(contactLookup.getColumnIndex(ContactsContract.Data.DISPLAY_NAME));
-                //String contactId = contactLookup.getString(contactLookup.getColumnIndex(BaseColumns._ID));
-            }
-        } finally {
-            if (contactLookup != null) {
-                contactLookup.close();
-            }
-        }
-
-        return name;
-    }
-
-
-    class CallReceiver extends PhoneCallReceiver {
-        public JSONObject rep = null;
-
+    class CallBroadcast extends PhoneCallReceiver {
 
         @Override
         protected void onIncomingCallStarted(final Context ctx, final String number, Date start) {
             Log.d(TAG, "incoming " + number);
 
-            String name=getNameByNumber(number);
-            sendData("onIncomingCallStarted",(name!=null)? name : number);
+            String name=new Utils().getNameByNumber(getApplicationContext(),number);
+            sendCallEvent("onIncomingCallStarted",(name!=null)? name : number);
 
         }
 
@@ -225,8 +231,8 @@ public class PhoneCallService extends Service {
         protected void onOutgoingCallStarted(Context ctx, String number, Date start) {
             Log.d(TAG, "Outgoing "+ number);
 
-            String name=getNameByNumber(number);
-            sendData("onOutgoingCallStarted",(name!=null)? name : number);
+            String name=new Utils().getNameByNumber(getApplicationContext(),number);
+            sendCallEvent("onOutgoingCallStarted",(name!=null)? name : number);
 
         }
 
@@ -234,16 +240,16 @@ public class PhoneCallService extends Service {
         protected void onIncomingCallEnded(Context ctx, String number, Date start, Date end) {
             Log.d(TAG, "End incoming " + number);
 
-            String name=getNameByNumber(number);
-            sendData("onIncomingCallEnded",(name!=null)? name : number);
+            String name=new Utils().getNameByNumber(getApplicationContext(),number);
+            sendCallEvent("onIncomingCallEnded",(name!=null)? name : number);
         }
 
         @Override
         protected void onOutgoingCallEnded(Context ctx, String number, Date start, Date end) {
             Log.d(TAG, "End outgoing "+ number);
 
-            String name=getNameByNumber(number);
-            sendData("onOutgoingCallEnded",(name!=null)? name : number);
+            String name=new Utils().getNameByNumber(getApplicationContext(),number);
+            sendCallEvent("onOutgoingCallEnded",(name!=null)? name : number);
         }
 
         @Override
@@ -251,8 +257,16 @@ public class PhoneCallService extends Service {
 
             Log.d(TAG, "Missed "+number);
 
-            String name=getNameByNumber(number);
-            sendData("onMissedCall",(name!=null)? name : number);
+            String name=new Utils().getNameByNumber(getApplicationContext(),number);
+            sendCallEvent("onMissedCall",(name!=null)? name : number);
+        }
+    }
+
+    class SmsBroadcast extends SMSReceiver{
+        @Override
+        protected void onSmsReceived(String from,String msg){
+            String name=new Utils().getNameByNumber(getApplicationContext(),from);
+            sendSmsEvent(name,msg);
         }
     }
 }

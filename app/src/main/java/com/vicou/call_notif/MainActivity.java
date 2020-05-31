@@ -96,12 +96,12 @@ public class MainActivity extends AppCompatActivity {
         btnTest.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                sendData(ha_url.getText().toString() + "/api/events/call_notif",ha_token.getText().toString(),"onIncomingCallStarted","***test***",device.getText().toString(),getApplicationContext());
+                sendData(ha_url.getText().toString() + "/api/events/call_event",ha_token.getText().toString(),"onIncomingCallStarted","***test***",device.getText().toString(),getApplicationContext());
             }
         });
 
         final Button btnStart=findViewById(R.id.btnStart);
-        btnStart.setEnabled(false);
+        if (!new preferences(this).getFirstStart()) {btnStart.setEnabled(false);}
         btnStart.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -143,7 +143,7 @@ public class MainActivity extends AppCompatActivity {
                 Log.d(TAG,""+response);
 
                 try {
-                    if (response.getString("message").equals("Event call_notif fired.")) ((Button)findViewById(R.id.btnStart)).setEnabled(true);
+                    if (response.getString("message").equals("Event call_event fired.")) ((Button)findViewById(R.id.btnStart)).setEnabled(true);
 
                 }catch (JSONException e){
 
@@ -191,6 +191,10 @@ public class MainActivity extends AppCompatActivity {
             ActivityCompat.requestPermissions(MainActivity.this,
                     new String[]{perm},code
                     );
+        } else{
+            int r[]=new int[1];
+            r[0]=PackageManager.PERMISSION_GRANTED;
+            onRequestPermissionsResult(code,null,r);
         }
     }
 
@@ -225,7 +229,7 @@ public class MainActivity extends AppCompatActivity {
                 if (grantResults.length > 0
                         && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
 
-                    checkPermissionAndRequest(Manifest.permission.ACCESS_FINE_LOCATION,2);
+                    checkPermissionAndRequest(Manifest.permission.ACCESS_FINE_LOCATION,3);
                 } else {
                     showError();
                 }
@@ -235,7 +239,16 @@ public class MainActivity extends AppCompatActivity {
                 if (grantResults.length > 0
                         && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
 
-                    checkPermissionAndRequest(Manifest.permission.INTERNET,3);
+                    checkPermissionAndRequest(Manifest.permission.INTERNET,4);
+                } else {
+                    showError();
+                }
+                break;
+            }
+            case 4:{
+                if (grantResults.length > 0
+                        && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                        checkPermissionAndRequest(Manifest.permission.RECEIVE_SMS,5);
                 } else {
                     showError();
                 }
